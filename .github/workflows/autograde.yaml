@@ -229,7 +229,7 @@ jobs:
                 if (lt == 0) { print "計測対象なし"; exit }
                 s = sprintf("%.0f%%（%d/%d）", lc * 100 / lt, lc, lt)
                 if (bt == 0) s = s " ／ 適切に実行確認できています"
-                else s = s sprintf(" ／ 実行確認できていないところがあります"
+                else s = s " ／ 実行確認できていないところがあります"
                 print s
               }'
           }
