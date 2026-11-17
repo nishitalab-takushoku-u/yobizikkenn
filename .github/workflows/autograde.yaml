@@ -1,0 +1,322 @@
+name: Autograde
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+      # 学生のリポジトリ（採点対象）
+      - uses: actions/checkout@v4
+
+      # 配布リポジトリ haihu（Judge.java・入力・正解）
+      - uses: actions/checkout@v4
+        with:
+          repository: nishitalab-takushoku-u/haihu
+          # token: ${{ secrets.KANRI_TOKEN }}
+          path: haihu
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: JaCoCoの準備
+        run: |
+          mkdir -p "$RUNNER_TEMP/jacoco"
+          base=https://repo1.maven.org/maven2/org/jacoco
+          v=0.8.16
+          curl -fsSL -o "$RUNNER_TEMP/jacoco/jacocoagent.jar" "$base/org.jacoco.agent/$v/org.jacoco.agent-$v-runtime.jar"
+          curl -fsSL -o "$RUNNER_TEMP/jacoco/jacococli.jar"   "$base/org.jacoco.cli/$v/org.jacoco.cli-$v-nodeps.jar"
+
+      - name: 採点
+        run: |
+          POINTS=10          # 1プログラムあたりの配点
+          bt='```'
+          err_file="$RUNNER_TEMP/stderr.txt"
+
+          JACOCO_AGENT="$RUNNER_TEMP/jacoco/jacocoagent.jar"
+          JACOCO_CLI="$RUNNER_TEMP/jacoco/jacococli.jar"
+
+          # Judge.java をコンパイル
+          JUDGE_DIR="$RUNNER_TEMP/judge"
+          mkdir -p "$JUDGE_DIR"
+          if ! judge_log=$(javac -encoding UTF-8 -d "$JUDGE_DIR" haihu/Judge.java 2>&1); then
+            {
+              echo "## Judge.java のコンパイルに失敗しました"
+              echo
+              echo "$bt"
+              echo "$judge_log"
+              echo "$bt"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # 現在あるフォルダ（第1回、第2回、…）を数字の小さい順に取得
+          mapfile -t FOLDERS < <(
+            for d in 第[0-9]*回; do
+              [ -d "$d" ] && echo "${d//[^0-9]/} $d"
+            done | sort -n | cut -d' ' -f2
+          )
+
+          if [ "${#FOLDERS[@]}" -eq 0 ]; then
+            echo "## 採点対象のフォルダ（第n回）が見つかりません" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # 名前そのもの、または 名前.txt のファイルを探す
+          find_file() {
+            for p in "$1" "$1.txt"; do
+              if [ -f "$p" ]; then echo "$p"; return 0; fi
+            done
+            return 0
+          }
+
+          # history.log から「最新のコンパイル後に実行確認したか」を判定
+          check_log() {
+            local logf="log/history.log"
+            if [ ! -f "$logf" ]; then echo "history.logなし"; return; fi
+            tr -d '\r' < "$logf" | awk -v n="$1" '
+              /\] CMD :/ {
+                cur = ""
+                sub(/^.*CMD : */, "")
+                cnt = split($0, t, /[ \t]+/)
+                if (t[1] == "javac") {
+                  for (i = 2; i <= cnt; i++) {
+                    f = t[i]; sub(/^.*\//, "", f)
+                    if (f == n ".java") { compiled = 1; cfail = 0; ran = 0; exited = 0; cur = "c" }
+                  }
+                } else if (t[1] == "java") {
+                  for (i = 2; i <= cnt; i++) {
+                    if (t[i] == n && compiled) { ran = 1; exited = 0; cur = "r" }
+                  }
+                }
+                next
+              }
+              /\] EXIT:/ {
+                sub(/^.*EXIT: */, "")
+                if (cur == "c") cfail = ($0 + 0 != 0)
+                if (cur == "r") exited = 1
+                cur = ""
+              }
+              END {
+                if (!compiled)      print "コンパイル履歴がありません"
+                else if (cfail)     print "コンパイルに失敗しています"
+                else if (!ran)      print "コンパイル後に実行していません"
+                else if (!exited)   print "実行を終了していません"
+                else                print "実行確認済みです"
+              }'
+          }
+
+          # 全行を表示し、違う行だけ印を付ける
+          # 左(期待)は "+"（緑）、右(実際)は "-"（赤）
+          mark_diff() {
+            awk -v side="$3" '
+              NR==FNR { e[FNR]=$0; en=FNR; next }
+              { a[FNR]=$0; an=FNR }
+              END {
+                n = (en > an) ? en : an
+                for (i = 1; i <= n; i++) {
+                  same = ((i in e) && (i in a) && e[i] == a[i])
+                  if (side == "left") {
+                    if (!(i in e)) continue
+                    p = same ? " " : " "
+                    print p e[i]
+                  } else {
+                    if (!(i in a)) { print " "; continue }
+                    p = same ? " " : " "
+                    print p a[i]
+                  }
+                }
+              }' "$1" "$2"
+          }
+
+                    # history.log から、最新のコンパイル以降の標準入力をテストケースとして書き出す
+          # 1回の実行(java プログラム名)につき case_001.txt, case_002.txt, ... を作る
+          extract_tests() {
+            tr -d '\r' < log/history.log | awk -v n="$1" -v dir="$2" '
+              /\] CMD :/ {
+                cur = 0
+                line = $0; sub(/^.*CMD : */, "", line)
+                cnt = split(line, t, /[ \t]+/)
+                if (t[1] == "javac") {
+                  for (i = 2; i <= cnt; i++) {
+                    f = t[i]; sub(/^.*\//, "", f)
+                    if (f == n ".java") runs = 0      # 最新のコンパイルより前の実行は捨てる
+                  }
+                } else if (t[1] == "java") {
+                  for (i = 2; i <= cnt; i++) {
+                    if (t[i] == n) { runs++; len[runs] = 0; cur = runs; break }
+                  }
+                }
+                next
+              }
+              /\] IN  :/ && cur > 0 {
+                line = $0; sub(/^\[[0-9: -]*\] IN  : ?/, "", line)
+                len[cur]++; v[cur, len[cur]] = line
+                next
+              }
+              /\] EXIT:/ { cur = 0 }
+              END {
+                for (r = 1; r <= runs; r++) {
+                  file = sprintf("%s/case_%03d.txt", dir, r)
+                  printf "" > file
+                  for (k = 1; k <= len[r]; k++) print v[r, k] > file
+                  close(file)
+                }
+              }'
+          }
+
+          # JaCoCoでカバレッジを計測し、「行 80%（8/10） ／ 分岐 50%（2/4）」の形で出力
+          # デフォルトコンストラクタ（クラス宣言の行）は集計から除外する
+          # $1=プログラム名  $2=コンパイル先フォルダ  $3=学生のソースファイル
+          measure_coverage() {
+            local name="$1" work="$2" srcfile="$3"
+            local tdir="$RUNNER_TEMP/tests/$folder/$name"
+            rm -rf "$tdir"; mkdir -p "$tdir"
+
+            if [ ! -f log/history.log ]; then echo "計測不可（history.logなし）"; return; fi
+            extract_tests "$name" "$tdir"
+
+            local cases=("$tdir"/case_*.txt)
+            if [ ! -e "${cases[0]}" ]; then echo "テストケースなし"; return; fi
+
+            local jexec="$work/jacoco.exec"
+            rm -f "$jexec"
+            local c
+            for c in "${cases[@]}"; do
+              timeout 10 java \
+                -javaagent:"$JACOCO_AGENT"=destfile="$jexec",append=true,includes="${name}:${name}\$*" \
+                -cp "$work" "$name" < "$c" > /dev/null 2>&1 || true
+            done
+
+            if [ ! -f "$jexec" ]; then echo "計測失敗"; return; fi
+            if ! java -jar "$JACOCO_CLI" report "$jexec" --classfiles "$work" \
+                 --xml "$work/jacoco.xml" > /dev/null 2>&1; then
+              echo "レポート作成失敗"; return
+            fi
+
+            # ソース中の class / enum / record / interface 宣言がある行番号（例: ",3,10,"）
+            local declines
+            declines=$(tr -d '\r' < "$srcfile" | awk '
+              /(^|[^A-Za-z0-9_$])(class|enum|record|interface)[ \t]+[A-Za-z_]/ { printf ",%d", NR }
+              END { printf "," }')
+
+            # XMLを1タグ1行に分解して集計。
+            # <init> メソッドの開始行が「クラス宣言の行」と一致する行は、
+            # 自動生成されたデフォルトコンストラクタとみなして除外する
+            grep -o '<[a-z]* [^>]*>' "$work/jacoco.xml" | awk -v decl="$declines" '
+              function attr(s, k) {
+                if (match(s, " " k "=\"[^\"]*\""))
+                  return substr(s, RSTART + length(k) + 3, RLENGTH - length(k) - 4)
+                return ""
+              }
+              /^<method / {
+                if (attr($0, "name") == "&lt;init&gt;") initl[attr($0, "line")] = 1
+                next
+              }
+              /^<line / {
+                nr = attr($0, "nr")
+                mi = attr($0, "mi") + 0; ci = attr($0, "ci") + 0
+                mb = attr($0, "mb") + 0; cb = attr($0, "cb") + 0
+                if ((nr in initl) && index(decl, "," nr ",") > 0) next
+                if (mi + ci > 0) { lt++; if (ci > 0) lc++ }
+                bt += mb + cb; bc += cb
+              }
+              END {
+                if (lt == 0) { print "計測対象なし"; exit }
+                s = sprintf("%.0f%%（%d/%d）", lc * 100 / lt, lc, lt)
+                if (bt == 0) s = s " ／ 適切に実行確認できています"
+                else s = s sprintf(" ／ 実行確認できていないところがあります"
+                print s
+              }'
+          }
+
+          for folder in "${FOLDERS[@]}"; do
+            mapfile -t files < <(find "$folder" -name '*.java' | sort)
+            [ "${#files[@]}" -gt 0 ] || continue
+
+            total=0; max=0; rows=""; failures=""
+
+            for f in "${files[@]}"; do
+              name=$(basename "$f" .java)
+              max=$((max + POINTS))
+
+              inf=$(find_file "haihu/$folder/管理用/input/$name")
+              outf=$(find_file "haihu/$folder/管理用/answer/$name")
+
+              # 学生のプログラムをコンパイル（毎回きれいなフォルダに出力）
+              work="$RUNNER_TEMP/work/$folder/$name"
+              rm -rf "$work"; mkdir -p "$work"
+              compile_log=$(javac -encoding UTF-8 -d "$work" "$f" 2>&1) && compiled=1 || compiled=0
+
+              if [ "$compiled" -eq 0 ]; then
+                mark="×"
+                failures+="<details open><summary>${name}</summary>"$'\n\n'"コンパイルエラー"$'\n\n'"${bt}"$'\n'"${compile_log}"$'\n'"${bt}"$'\n\n'"</details>"$'\n\n'
+              elif [ -z "$outf" ]; then
+                mark="×"
+                failures+="<details open><summary>${name}</summary>"$'\n\n'"正解ファイルが見つかりません"$'\n\n'"</details>"$'\n\n'
+              else
+                # 標準入力ファイル（なければ空）
+                if [ -n "$inf" ]; then
+                  src="$GITHUB_WORKSPACE/$inf"
+                else
+                  src=/dev/null
+                fi
+
+                # Judge は .class を JUDGE_SCRIPT_DIR から探す
+                actual=$(JUDGE_SCRIPT_DIR="$work" timeout 60 java -cp "$JUDGE_DIR" Judge "$name" < "$src" 2>"$err_file") || true
+                actual=$(printf '%s' "$actual" | tr -d '\r')
+                expected=$(tr -d '\r' < "$outf")
+                err=$(cat "$err_file")
+
+                if [ "$actual" = "$expected" ]; then
+                  mark="○"; total=$((total + POINTS))
+                else
+                  mark="×"
+
+                  printf '%s\n' "$expected" > "$RUNNER_TEMP/exp.txt"
+                  printf '%s\n' "$actual"   > "$RUNNER_TEMP/act.txt"
+                  left=$(mark_diff "$RUNNER_TEMP/exp.txt" "$RUNNER_TEMP/act.txt" left)
+                  right=$(mark_diff "$RUNNER_TEMP/exp.txt" "$RUNNER_TEMP/act.txt" right)
+
+                  failures+="<details open><summary>${name}</summary>"$'\n\n'"出力が一致しません（色の付いた行が、期待と異なる行です）"$'\n\n'
+                  failures+="<table>"$'\n'"<tr><th>適切な出力</th><th>あなたの出力</th></tr>"$'\n'"<tr>"$'\n'"<td>"$'\n\n'
+                  failures+="${bt}diff"$'\n'"${left}"$'\n'"${bt}"$'\n\n'
+                  failures+="</td>"$'\n'"<td>"$'\n\n'
+                  failures+="${bt}diff"$'\n'"${right}"$'\n'"${bt}"$'\n\n'
+                  failures+="</td>"$'\n'"</tr>"$'\n'"</table>"$'\n\n'
+                  if [ -n "$err" ]; then
+                    failures+="エラー出力："$'\n'"${bt}"$'\n'"${err}"$'\n'"${bt}"$'\n\n'
+                  fi
+                  failures+="</details>"$'\n\n'
+                fi
+              fi
+
+              note=$(check_log "$name")
+              if [ "$compiled" -eq 1 ]; then
+                cov=$(measure_coverage "$name" "$work" "$f")
+              else
+                cov="計測不可（コンパイルエラー）"
+              fi
+              rows+="| ${name} | ${mark} | ${note}<br>${cov} |"$'\n'
+            done
+
+            # Summaryに出力（フォルダごと）
+            {
+              echo "## ${folder}採点結果　${total}/${max}"
+              echo
+              echo "| プログラム名 | 正誤 | 実行確認 |"
+              echo "|------|------|------|"
+              printf "%s" "$rows"
+              if [ -n "$failures" ]; then
+                echo
+                echo "**不正解の詳細**（プログラム名をクリックすると詳細を確認できます）"
+                echo
+                printf "%s" "$failures"
+              fi
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          done

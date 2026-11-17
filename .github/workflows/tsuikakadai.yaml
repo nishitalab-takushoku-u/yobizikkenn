@@ -1,0 +1,101 @@
+# 追加課題
+# リポジトリの .github/workflows/tsuikakadai.yml として配置します
+name: Sync input/answer from haihu
+
+on:
+  push:
+    branches:
+      - main # 対象ブランチ。必要に応じて変更してください
+
+permissions:
+  contents: write # このリポジトリに push するために必要
+
+env:
+  # haihu 側のフォルダ名 = 「変更のあったフォルダ名」+ SUFFIX
+  # 例: 課題1 が変更された場合 → haihu の「課題1Actions」を参照
+  SUFFIX: "Actions"
+  TSUIKA: "追加課題"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 現在のリポジトリ（gakusei）を取得（差分比較のため全履歴を取得）
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. haihu を取得
+      - name: Checkout haihu
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/haihu
+          path: _haihu_tmp
+          # haihu が private の場合のみ必要（PAT を Secrets に HAIHU_TOKEN として登録）
+          # token: ${{ secrets.HAIHU_TOKEN || github.token }}
+
+      # 3. プッシュで中身に変更のあった直下フォルダを検出
+      - name: Detect changed folders
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          git config core.quotePath false
+
+          # 新規ブランチ作成時などで before が使えない場合は、直前のコミットと比較
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            BEFORE=$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || git hash-object -t tree /dev/null)
+          fi
+
+          git diff --name-only -z "$BEFORE" "$GITHUB_SHA" \
+            | while IFS= read -r -d '' f; do
+                case "$f" in
+                  */*) printf '%s\n' "${f%%/*}" ;;   # 直下フォルダ内のファイルのみ対象
+                esac
+              done \
+            | sort -u > "$RUNNER_TEMP/changed_dirs.txt"
+
+          echo "変更のあったフォルダ:"
+          cat "$RUNNER_TEMP/changed_dirs.txt"
+
+      # 4. 各フォルダに対して input / answer をコピー
+      - name: Copy input and answer
+        run: |
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            case "$dir" in .*) continue ;; esac   # .github などは除外
+            [ -d "$dir" ] || continue              # 削除されたフォルダは除外
+
+            src="_haihu_tmp/${dir}${SUFFIX}/$TSUIKA"
+            if [ ! -d "$src" ]; then
+              echo "スキップ: haihu に '${dir}${SUFFIX}' がありません"
+              continue
+            fi
+
+            for sub in input answer; do
+              if [ -d "$src/$sub" ]; then
+                mkdir -p "$dir/管理用/$sub"
+                cp -r "$src/$sub/." "$dir/管理用/$sub/"
+                echo "コピー: $src/$sub → $dir/管理用/$sub"
+              else
+                echo "スキップ: $src/管理用/$sub がありません"
+              fi
+            done
+          done < "$RUNNER_TEMP/changed_dirs.txt"
+
+          # haihu の作業ディレクトリは追加対象から除外
+          rm -rf _haihu_tmp
+
+      # 5. 変更があればコミット＆プッシュ
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "変更なし"
+          else
+            git commit -m "Sync input/answer from haihu"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
