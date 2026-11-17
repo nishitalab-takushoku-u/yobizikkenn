@@ -122,7 +122,7 @@ jobs:
                   same = ((i in e) && (i in a) && e[i] == a[i])
                   if (side == "left") {
                     if (!(i in e)) continue
-                    p = same ? " " : " "
+                    p = same ? " " : "-"
                     print p e[i]
                   } else {
                     if (!(i in a)) { print " "; continue }
