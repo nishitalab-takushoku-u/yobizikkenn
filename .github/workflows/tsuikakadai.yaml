@@ -66,7 +66,7 @@ jobs:
             case "$dir" in .*) continue ;; esac   # .github などは除外
             [ -d "$dir" ] || continue              # 削除されたフォルダは除外
 
-            src="_haihu_tmp/${dir}${SUFFIX}/$TSUIKA"
+            src="_haihu_tmp/${dir}${SUFFIX}"
             if [ ! -d "$src" ]; then
               echo "スキップ: haihu に '${dir}${SUFFIX}' がありません"
               continue
@@ -74,11 +74,12 @@ jobs:
 
             for sub in input answer; do
               if [ -d "$src/$sub" ]; then
-                mkdir -p "$dir/管理用/$sub"
-                cp -r "$src/$sub/." "$dir/管理用/$sub/"
-                echo "コピー: $src/$sub → $dir/管理用/$sub"
+                mkdir -p "$dir/$sub"
+                # 同名ファイルが既にある場合は上書きせずスキップ（新規ファイルのみ追加）
+                rsync -a --ignore-existing "$src/$sub/" "$dir/$sub/"
+                echo "コピー: $src/$sub → $dir/$sub（既存ファイルはスキップ）"
               else
-                echo "スキップ: $src/管理用/$sub がありません"
+                echo "スキップ: $src/$sub がありません"
               fi
             done
           done < "$RUNNER_TEMP/changed_dirs.txt"

@@ -229,7 +229,8 @@ jobs:
               END {
                 if (lt == 0) { print "計測対象なし"; exit }
                 s = sprintf("%.0f%%（%d/%d）", lc * 100 / lt, lc, lt)
-                total=$((total + lc*10))
+                total += lc / lt * 10
+                print lc / lt * 10
                 if (bt == 0) s = s " ： 適切に実行確認できています"
                 else s = s " ： 実行確認できていない分岐があります"
                 print s
@@ -244,7 +245,7 @@ jobs:
 
             for f in "${files[@]}"; do
               name=$(basename "$f" .java)
-              max=$((max*2 + POINTS))
+              max=$((max + POINTS * 2))
 
               inf=$(find_file "haihu/$folder/管理用/input/$name")
               outf=$(find_file "haihu/$folder/管理用/answer/$name")
