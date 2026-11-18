@@ -34,7 +34,7 @@ jobs:
       - name: 採点
         run: |
           POINTS=10          # 1プログラムあたりの配点
-          total=0
+          TOTAL=0
           bt='```'
           err_file="$RUNNER_TEMP/stderr.txt"
 
@@ -208,7 +208,8 @@ jobs:
             # XMLを1タグ1行に分解して集計。
             # <init> メソッドの開始行が「クラス宣言の行」と一致する行は、
             # 自動生成されたデフォルトコンストラクタとみなして除外する
-            grep -o '<[a-z]* [^>]*>' "$work/jacoco.xml" | awk -v decl="$declines" '
+            grep -o '<[a-z]* [^>]*>' "$work/jacoco.xml" | awk -v decl="$declines" \
+              -v pointsFile="$work/c_points.txt" -v cp="$C_POINTS" '
               function attr(s, k) {
                 if (match(s, " " k "=\"[^\"]*\""))
                   return substr(s, RSTART + length(k) + 3, RLENGTH - length(k) - 4)
@@ -229,8 +230,7 @@ jobs:
               END {
                 if (lt == 0) { print "計測対象なし"; exit }
                 s = sprintf("%.0f%%（%d/%d）", lc * 100 / lt, lc, lt)
-                total += lc / lt * 10
-                print lc / lt * 10
+                printf "%.4f\n", (lc + 0) / lt * cp > pointsFile
                 if (bt == 0) s = s " ： 適切に実行確認できています"
                 else s = s " ： 実行確認できていない分岐があります"
                 print s
@@ -241,7 +241,7 @@ jobs:
             mapfile -t files < <(find "$folder" -name '*.java' | sort)
             [ "${#files[@]}" -gt 0 ] || continue
 
-            max=0; rows=""; failures=""
+            total=0; max=0; rows=""; failures=""
 
             for f in "${files[@]}"; do
               name=$(basename "$f" .java)
@@ -298,12 +298,22 @@ jobs:
                 fi
               fi
 
+              # note=$(check_log "$name")
+              # if [ "$compiled" -eq 1 ]; then
+              #   cov=$(measure_coverage "$name" "$work" "$f")
+              # else
+              #   cov="計測不可（コンパイルエラー）"
+              # fi
+              # rows+="| ${name} | ${mark} | ${note}<br>${cov} |"$'\n'
+
               note=$(check_log "$name")
               if [ "$compiled" -eq 1 ]; then
                 cov=$(measure_coverage "$name" "$work" "$f")
+                pts=$(cat "$work/c_points.txt" 2>/dev/null || echo 0)
               else
-                cov="計測不可（コンパイルエラー）"
+                cov="計測不可（コンパイルエラー）"; pts=0
               fi
+              total = $((total + C_POINTS)) 
               rows+="| ${name} | ${mark} | ${note}<br>${cov} |"$'\n'
             done
 
