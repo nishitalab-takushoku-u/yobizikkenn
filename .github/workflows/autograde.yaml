@@ -209,7 +209,7 @@ jobs:
             # <init> メソッドの開始行が「クラス宣言の行」と一致する行は、
             # 自動生成されたデフォルトコンストラクタとみなして除外する
             grep -o '<[a-z]* [^>]*>' "$work/jacoco.xml" | awk -v decl="$declines" \
-              -v pointsFile="$work/c_points.txt" -v cp="$C_POINTS" '
+              -v pointsFile="$work/c_points.txt" -v cp="$TOTAL" '
               function attr(s, k) {
                 if (match(s, " " k "=\"[^\"]*\""))
                   return substr(s, RSTART + length(k) + 3, RLENGTH - length(k) - 4)
@@ -313,7 +313,7 @@ jobs:
               else
                 cov="計測不可（コンパイルエラー）"; pts=0
               fi
-              total = $((total + C_POINTS)) 
+              total = $((total + TOTAL)) 
               rows+="| ${name} | ${mark} | ${note}<br>${cov} |"$'\n'
             done
 
