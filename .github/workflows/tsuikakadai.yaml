@@ -73,13 +73,13 @@ jobs:
             fi
 
             for sub in input answer; do
-              if [ -d "$src/$sub" ]; then
-                mkdir -p "$dir/$sub"
+              if [ -d "$src/追加課題/$sub" ]; then
+                mkdir -p "$dir/管理用/$sub"
                 # 同名ファイルが既にある場合は上書きせずスキップ（新規ファイルのみ追加）
-                rsync -a --ignore-existing "$src/$sub/" "$dir/$sub/"
-                echo "コピー: $src/$sub → $dir/$sub（既存ファイルはスキップ）"
+                rsync -a --ignore-existing "$src/追加課題/$sub/" "$dir/管理用/$sub/"
+                echo "コピー: $src/追加課題/$sub → $dir/管理用/$sub（既存ファイルはスキップ）"
               else
-                echo "スキップ: $src/$sub がありません"
+                echo "スキップ: $src/追加課題/$sub がありません"
               fi
             done
           done < "$RUNNER_TEMP/changed_dirs.txt"
