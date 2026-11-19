@@ -6,12 +6,10 @@ public class Even {
         Scanner scanner = new Scanner(System.in);
         int n = scanner.nextInt();
 
-        if (n % 2 == 0) {
-            System.out.println("n は偶数です。");
-        }
-        else {
-            System.out.println("n は奇数です。");
-        }
+        // ↑上記はSystem.console().readLine() と Integer.parseInt() の代わりの命令
+        
+        // ↓ここから下にプログラムを記述
+
     }
 }
 
