@@ -20,8 +20,8 @@ two
 ===== テスト3 =====
 [実行結果]
 % java Translate
-n = [INPUT]
-three
+[INPUT]
+n = three
  
 [入力内容]
 3
@@ -29,8 +29,8 @@ three
 ===== テスト4 =====
 [実行結果]
 % java Translate
-[INPUT]
-n = four
+n = [INPUT]
+four
  
 [入力内容]
 4
