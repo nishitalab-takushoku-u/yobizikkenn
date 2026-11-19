@@ -78,7 +78,7 @@ jobs:
 
                 # 同名ファイルが既にある場合は上書きせずスキップ（新規ファイルのみ追加）
                 if [ "$sub" = "" ]; then
-                  rsync -a --ignore-existing --exclude="追加課題/" "$src/追加課題/$sub/" "$dir/管理用/$sub/"
+                  rsync -a --ignore-existing --exclude="追加課題/" "$src/追加課題/" "$dir/"
                 else
                   rsync -a --ignore-existing "$src/追加課題/$sub/" "$dir/管理用/$sub/"
                   echo "コピー: $src/追加課題/$sub → $dir/管理用/$sub（既存ファイルはスキップ）"
