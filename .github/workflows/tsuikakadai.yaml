@@ -58,7 +58,7 @@ jobs:
           echo "変更のあったフォルダ:"
           cat "$RUNNER_TEMP/changed_dirs.txt"
 
-      # 4. 各フォルダに対して input / answer をコピー
+      # 4. 各フォルダに対して input / answer と javaファイル をコピー
       - name: Copy input and answer
         run: |
           while IFS= read -r dir; do
@@ -72,12 +72,18 @@ jobs:
               continue
             fi
 
-            for sub in input answer; do
+            for sub in "" input answer; do
               if [ -d "$src/追加課題/$sub" ]; then
                 mkdir -p "$dir/管理用/$sub"
+
                 # 同名ファイルが既にある場合は上書きせずスキップ（新規ファイルのみ追加）
-                rsync -a --ignore-existing "$src/追加課題/$sub/" "$dir/管理用/$sub/"
-                echo "コピー: $src/追加課題/$sub → $dir/管理用/$sub（既存ファイルはスキップ）"
+                if [ "$sub" = "" ]; then
+                  rsync -a --ignore-existing --exclude="追加課題/" "$src/追加課題/$sub/" "$dir/管理用/$sub/"
+                else
+                  rsync -a --ignore-existing "$src/追加課題/$sub/" "$dir/管理用/$sub/"
+                  echo "コピー: $src/追加課題/$sub → $dir/管理用/$sub（既存ファイルはスキップ）"
+                fi        
+                
               else
                 echo "スキップ: $src/追加課題/$sub がありません"
               fi
