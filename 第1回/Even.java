@@ -8,7 +8,7 @@ public class Even {
 
         // ↑上記はSystem.console().readLine() と Integer.parseInt() の代わりの命令
         
-        // ↓ここから下にプログラムを記述
+        // ↓ここから下にプログラムを記述（ヒント：if文を利用）
 
     }
 }
